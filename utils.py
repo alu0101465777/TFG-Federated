@@ -225,7 +225,7 @@ def test_nn(net, X_test, y_test):
         "recall":       float(recall_score(y_true, y_pred, average="weighted", zero_division=0)),
         "f1":           float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
         "mcc":          float(matthews_corrcoef(y_true, y_pred)),
-        "auc_roc":      float(roc_auc_score(y_true, y_prob)),
+        "auc_roc":      float(roc_auc_score(y_true, y_prob)) if len(np.unique(y_true)) > 1 else 0.5,
         "tp": float(tp), "tn": float(tn), "fp": float(fp), "fn": float(fn),
         "precision_c0": float(p_per[0]), "precision_c1": float(p_per[1]),
         "recall_c0":    float(r_per[0]), "recall_c1":    float(r_per[1]),
