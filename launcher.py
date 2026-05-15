@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import subprocess
 import sys
 import time
@@ -8,9 +6,8 @@ import os
 import signal
 from typing import List, Optional
 
-# --------------------------------------------------------------------------
 # Configuracion
-# --------------------------------------------------------------------------
+
 PYTHON_EXECUTABLE      = sys.executable
 SERVER_SCRIPT          = "server.py"
 CLIENT_SCRIPT          = "client.py"
@@ -19,9 +16,8 @@ DELAY_SERVER_START     = 3   # Segundos de espera tras iniciar servidor
 
 processes: List[subprocess.Popen] = []
 
-# --------------------------------------------------------------------------
 # Manejo de senales
-# --------------------------------------------------------------------------
+
 def signal_handler(signum, frame):
     print("\n\n[LAUNCHER] Interrupcion recibida. Deteniendo todos los procesos...")
     cleanup_processes()
@@ -39,9 +35,8 @@ def cleanup_processes():
                 print(f"[LAUNCHER] Error al terminar proceso: {e}")
     print("[LAUNCHER] Todos los procesos han sido detenidos.")
 
-# --------------------------------------------------------------------------
 # Funciones de lanzamiento
-# --------------------------------------------------------------------------
+
 def check_files_exist():
     missing = [f for f in [SERVER_SCRIPT, CLIENT_SCRIPT, "utils.py"]
                if not os.path.exists(f)]
@@ -89,9 +84,8 @@ def launch_client(client_id: int, num_clients: int,
         print(f"[ERROR] No se pudo iniciar el cliente {client_id}: {e}")
         return None
 
-# --------------------------------------------------------------------------
 # Orquestador principal
-# --------------------------------------------------------------------------
+
 def launch_federated_system(num_clients: int, model_type: str,
                             use_dirichlet: bool):
     model_label = "Red Neuronal" if model_type == "nn" else "Regresion Logistica"
@@ -144,9 +138,7 @@ def launch_federated_system(num_clients: int, model_type: str,
     finally:
         cleanup_processes()
 
-# --------------------------------------------------------------------------
 # Main
-# --------------------------------------------------------------------------
 def main():
     signal.signal(signal.SIGINT,  signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

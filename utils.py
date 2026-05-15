@@ -1,4 +1,3 @@
-# utils.py — VERSION UNIFICADA (Red Neuronal + Regresion Logistica)
 import numpy as np
 import pandas as pd
 import torch
@@ -12,29 +11,18 @@ from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import (accuracy_score, log_loss, precision_score, recall_score,
                              f1_score, confusion_matrix, matthews_corrcoef, roc_auc_score)
 
-# --------------------------------------------------------------------------
 # Parametro de particion Dirichlet
-# --------------------------------------------------------------------------
-# Alpha controla el grado de heterogeneidad entre clientes:
+
+# Alpha controla el grado de heterogeneidad entre clientes: ( Importante )
 #   alpha pequeño (0.1) -> muy no-IID (cada cliente ve casi una sola clase)
-#   alpha = 0.5         -> heterogeneidad moderada, estandar en literatura FL
+#   alpha = 0.5         -> heterogeneidad moderada ( Se elige esta opcion porque es un buen punto intermedio)
 #   alpha grande (1.0+) -> casi IID
 DIRICHLET_ALPHA = 0.5
 
-# ==========================================================================
 # BLOQUE 1: CARGA DE DATOS (compartido por ambos modelos)
 # Siempre devuelve arrays NumPy: X_train, X_test, y_train, y_test
-# ==========================================================================
 
 def _build_preprocessors():
-    """
-    Carga el dataset COMPLETO para ajustar VarianceThreshold y StandardScaler.
-    Al ajustar sobre los datos completos, todos los clientes aplican exactamente
-    la misma transformacion y obtienen el mismo numero de features,
-    independientemente del tamaño de su particion local.
-    Esto evita size mismatch en fc1.weight (RNA) y en coef_ (RL) al cargar
-    el estado global del servidor.
-    """
     df0 = pd.read_csv("clase0.csv", nrows=5000)
     df1 = pd.read_csv("clase1.csv", nrows=5000)
     df0["Target"] = 0
@@ -65,7 +53,7 @@ def _build_preprocessors():
 
 
 def _load_full_data():
-    """Carga el dataset completo. Cada cliente ve todos los datos (escenario IID)."""
+    # Carga el dataset completo. Cada cliente ve todos los datos (escenario IID).
     df0 = pd.read_csv("clase0.csv", nrows=5000)
     df1 = pd.read_csv("clase1.csv", nrows=5000)
     df0["Target"] = 0
@@ -84,11 +72,9 @@ def _load_full_data():
 
 
 def _load_dirichlet_partition(partition_id: int, num_partitions: int):
-    """
-    Carga la particion Dirichlet de este cliente.
-    DirichletPartitioner asigna a cada cliente una proporcion distinta de
-    muestras por clase, simulando heterogeneidad real entre dispositivos IoT.
-    """
+    
+   # Carga la particion Dirichlet de este cliente.
+
     from datasets import Dataset as HFDataset
     from flwr_datasets.partitioner import DirichletPartitioner
 
@@ -131,17 +117,14 @@ def _load_dirichlet_partition(partition_id: int, num_partitions: int):
 
 def load_data(partition_id: int = None, num_partitions: int = None,
               use_dirichlet: bool = False):
-    """
-    Punto de entrada unico para la carga de datos. Usado por ambos modelos.
 
-    Devuelve siempre arrays NumPy: X_train, X_test, y_train, y_test.
-    - La RNA los envuelve en DataLoaders internamente en sus funciones train/test.
-    - La RL los usa directamente.
+    # Punto de entrada unico para la carga de datos. Usado por ambos modelos.
 
-    El preprocesamiento (VarianceThreshold + StandardScaler) se ajusta SIEMPRE
-    sobre el dataset completo para garantizar el mismo numero de features en
-    todos los clientes, independientemente de la particion local.
-    """
+    # Devuelve siempre arrays NumPy: X_train, X_test, y_train, y_test.
+    # - La RNA los envuelve en DataLoaders internamente en sus funciones train/test.
+    # - La RL los usa directamente.
+
+
     if use_dirichlet:
         X, y = _load_dirichlet_partition(partition_id, num_partitions)
     else:
@@ -155,12 +138,10 @@ def load_data(partition_id: int = None, num_partitions: int = None,
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
 
-# ==========================================================================
 # BLOQUE 2: RED NEURONAL (PyTorch)
-# ==========================================================================
 
 class IoTDataset(Dataset):
-    """Convierte arrays NumPy a tensores PyTorch."""
+    
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -187,12 +168,10 @@ class Net(nn.Module):
 
 
 def get_model_size_bytes(net):
-    """Tamaño del modelo en bytes (suma de todos los parametros)."""
     return sum(p.numel() * p.element_size() for p in net.parameters())
 
 
 def train_nn(net, X_train, y_train, epochs=1):
-    """Entrena la red neuronal. Crea el DataLoader internamente."""
     loader = DataLoader(IoTDataset(X_train, y_train), batch_size=32, shuffle=True)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
@@ -209,7 +188,6 @@ def train_nn(net, X_train, y_train, epochs=1):
 
 
 def test_nn(net, X_test, y_test):
-    """Evalua la red neuronal y devuelve un diccionario con todas las metricas."""
     loader = DataLoader(IoTDataset(X_test, y_test), batch_size=32)
     criterion = nn.CrossEntropyLoss()
     all_preds, all_labels, all_probs = [], [], []
@@ -256,12 +234,9 @@ def test_nn(net, X_test, y_test):
     }
 
 
-# ==========================================================================
 # BLOQUE 3: REGRESION LOGISTICA (scikit-learn)
-# ==========================================================================
 
 def create_model(n_features: int) -> LogisticRegression:
-    """Crea y devuelve un modelo de Regresion Logistica inicializado."""
     model = LogisticRegression(max_iter=200, solver="lbfgs", warm_start=True)
     model.classes_ = np.array([0, 1])
     model.coef_ = np.zeros((1, n_features), dtype=np.float64)
@@ -270,19 +245,16 @@ def create_model(n_features: int) -> LogisticRegression:
 
 
 def model_to_params(model: LogisticRegression):
-    """Serializa el modelo como lista de arrays NumPy (interfaz Flower)."""
     return [model.coef_.copy(), model.intercept_.copy()]
 
 
 def params_to_model(model: LogisticRegression, params):
-    """Carga parametros del servidor en el modelo local."""
     model.coef_ = params[0].copy()
     model.intercept_ = params[1].copy()
     return model
 
 
 def train_lr(model: LogisticRegression, X_train, y_train) -> LogisticRegression:
-    """Entrena el modelo de regresion logistica."""
     # Comprobar si el cliente tiene al menos 2 clases
     clases_presentes = np.unique(y_train)
     if len(clases_presentes) < 2:
@@ -294,7 +266,6 @@ def train_lr(model: LogisticRegression, X_train, y_train) -> LogisticRegression:
 
 
 def test_lr(model: LogisticRegression, X_test, y_test) -> dict:
-    """Evalua el modelo de regresion logistica y devuelve todas las metricas."""
     preds = model.predict(X_test)
     proba = model.predict_proba(X_test)
 

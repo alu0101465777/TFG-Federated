@@ -5,9 +5,9 @@ import time
 import numpy as np
 from typing import List, Optional
 
-# --------------------------------------------------------------------------
+
 # Configuracion
-# --------------------------------------------------------------------------
+
 PATIENCE        = 3
 MIN_IMPROVEMENT = 0.001
 MAX_ROUNDS      = 50
@@ -23,9 +23,9 @@ TRACKED_METRICS_LR = [
     "accuracy", "precision", "recall", "f1", "mcc", "auc_roc",
 ]
 
-# --------------------------------------------------------------------------
+
 # 1. Registro de Metricas
-# --------------------------------------------------------------------------
+
 class TrainingMetrics:
     def __init__(self, tracked_metrics: List[str], metrics_csv: str, model_type: str):
         self.tracked_metrics  = tracked_metrics
@@ -162,9 +162,9 @@ class TrainingMetrics:
             return True
         return False
 
-# --------------------------------------------------------------------------
+
 # 2. Estrategia con Early Stopping
-# --------------------------------------------------------------------------
+
 class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
     def __init__(self, training_metrics: TrainingMetrics,
                  tracked_metrics: List[str], model_type: str, *args, **kwargs):
@@ -240,9 +240,9 @@ class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
 
         return agg_loss, {"accuracy": agg["accuracy"]}
 
-# --------------------------------------------------------------------------
+
 # Main
-# --------------------------------------------------------------------------
+
 def run_server(min_clients: int, model_type: str):
     if model_type == "nn":
         tracked_metrics = TRACKED_METRICS_NN

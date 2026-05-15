@@ -1,15 +1,3 @@
-"""
-centralized.py — Modelo Centralizado (Baseline)
-
-Punto 2.1 del TFG: entrenamiento centralizado sobre el dataset completo,
-sin ningun mecanismo federado. Sirve como referencia para comparar contra
-el sistema federado (2.2) y el sistema con agregacion segura (4.x).
-
-Reutiliza integranamente utils.py: mismos modelos, mismo preprocesamiento,
-mismas metricas. La unica diferencia es que aqui no hay rondas ni servidor.
-Ambos modelos exportan exactamente el mismo esquema de CSV.
-"""
-
 import argparse
 import csv
 import time
@@ -23,14 +11,13 @@ from utils import (
     create_model, train_lr, test_lr,
 )
 
-# --------------------------------------------------------------------------
+
 # Configuracion
-# --------------------------------------------------------------------------
+
 NN_EPOCHS      = 20
 METRICS_CSV_NN = "metrics_centralized_nn.csv"
 METRICS_CSV_LR = "metrics_centralized_lr.csv"
 
-# Esquema identico para ambos modelos
 FIELDNAMES = [
     "epoch_or_run", "time", "loss",
     "accuracy", "precision", "recall", "f1", "mcc", "auc_roc",
@@ -41,9 +28,9 @@ FIELDNAMES = [
     "model_bytes",
 ]
 
-# --------------------------------------------------------------------------
+
 # Argumentos
-# --------------------------------------------------------------------------
+
 parser = argparse.ArgumentParser(description="Modelo Centralizado (Baseline)")
 parser.add_argument(
     "--model", "-m",
@@ -53,10 +40,9 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# --------------------------------------------------------------------------
-# Funcion auxiliar: metricas extendidas (confusion matrix + por clase)
+
 # Se aplica a ambos modelos para garantizar el mismo esquema de CSV
-# --------------------------------------------------------------------------
+
 def _extended_metrics(y_true, y_pred):
     cm = confusion_matrix(y_true, y_pred)
     tn, fp, fn, tp = cm.ravel()
@@ -71,9 +57,8 @@ def _extended_metrics(y_true, y_pred):
         "f1_c0":        float(f_per[0]), "f1_c1":        float(f_per[1]),
     }
 
-# --------------------------------------------------------------------------
 # 1. Cargar datos completos
-# --------------------------------------------------------------------------
+
 print("\n" + "="*60)
 model_label = "Red Neuronal" if args.model == "nn" else "Regresion Logistica"
 print(f"  MODELO CENTRALIZADO — {model_label}")
@@ -86,9 +71,9 @@ print(f"  Features:      {n_features}")
 print(f"  Train samples: {X_train.shape[0]}")
 print(f"  Test samples:  {X_test.shape[0]}")
 
-# --------------------------------------------------------------------------
+
 # 2. Instanciar modelo
-# --------------------------------------------------------------------------
+
 if args.model == "nn":
     model = Net(n_features)
     model_bytes = float(sum(p.numel() * p.element_size()
@@ -97,9 +82,9 @@ else:
     model = create_model(n_features)
     model_bytes = float((n_features + 1) * 8)  # coef_ + intercept_ en float64
 
-# --------------------------------------------------------------------------
+
 # 3. Entrenamiento y evaluacion
-# --------------------------------------------------------------------------
+
 print(f"\n{'─'*60}")
 history = []
 t_start = time.time()
@@ -174,9 +159,9 @@ else:
 total_time = time.time() - t_start
 final = history[-1]
 
-# --------------------------------------------------------------------------
+
 # 4. Resumen en consola
-# --------------------------------------------------------------------------
+
 print(f"\n{'─'*60}")
 print("Evaluacion final sobre conjunto de test:")
 print(f"  Accuracy:  {final['accuracy']:.4f}    Precision: {final['precision']:.4f}    Recall: {final['recall']:.4f}")
@@ -187,9 +172,9 @@ print(f"  Clase 0 -> P={final['precision_c0']:.4f}  R={final['recall_c0']:.4f}  
 print(f"  Clase 1 -> P={final['precision_c1']:.4f}  R={final['recall_c1']:.4f}  F1={final['f1_c1']:.4f}")
 print(f"\n  Tiempo total: {total_time:.2f}s")
 
-# --------------------------------------------------------------------------
+
 # 5. Exportar CSV
-# --------------------------------------------------------------------------
+
 csv_path = METRICS_CSV_NN if args.model == "nn" else METRICS_CSV_LR
 with open(csv_path, "w", newline="") as f:
     w = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction="ignore")
