@@ -54,7 +54,7 @@ class TrainingMetrics:
     def start_training(self):
         self.start_time = time.time()
         model_label = "Red Neuronal" if self.model_type == "nn" else "Regresion Logistica"
-        ss_label    = f" + SecAgg Shamir" if self.ss_mode == "shamir" else ""
+        ss_label    = " + Agregacion Shamir (SS)" if self.ss_mode == "shamir" else ""
         print("\n" + "="*70)
         print(f"  INICIO DEL ENTRENAMIENTO FEDERADO ({model_label}{ss_label})")
         print("="*70)
@@ -118,7 +118,7 @@ class TrainingMetrics:
             print(f"  Train time (media): {train_mean:.4f}s")
 
         if self.ss_mode == "shamir":
-            print(f"  SecAgg Shamir: split={ss_split_time_mean*1000:.2f}ms | "
+            print(f"  Agg-Shamir (SS): split={ss_split_time_mean*1000:.2f}ms | "
                   f"agg={ss_agg_time*1000:.2f}ms")
 
         if len(client_accs) > 1:
@@ -137,7 +137,7 @@ class TrainingMetrics:
         print("="*70)
         print(f"  Modelo:              {model_label}")
         if self.ss_mode == "shamir":
-            print(f"  SecAgg:              Shamir (suma de shares en Z_P)")
+            print(f"  Agregacion segura:   Shamir (SS, suma de shares en Z_P)")
         print(f"  Rondas completadas:  {len(self.rounds)}")
         print(f"  Tiempo total:        {total_time:.2f} s")
         print(f"{'─'*70}")
@@ -158,8 +158,8 @@ class TrainingMetrics:
         if self.ss_mode == "shamir":
             avg_s = np.mean([r["ss_split_time_mean"] for r in self.rounds])
             avg_a = np.mean([r["ss_agg_time"]        for r in self.rounds])
-            print(f"  SecAgg split:        {avg_s*1000:.2f} ms/ronda")
-            print(f"  SecAgg agg:          {avg_a*1000:.2f} ms/ronda")
+            print(f"  SS split:            {avg_s*1000:.2f} ms/ronda")
+            print(f"  SS agg:              {avg_a*1000:.2f} ms/ronda")
         print(f"{'─'*70}")
         acc_vars = [r["accuracy_variance"] for r in self.rounds]
         print(f"  Varianza media acc:  {np.mean(acc_vars):.6f}")
@@ -185,6 +185,7 @@ class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
     def __init__(self, training_metrics: TrainingMetrics,
                  tracked_metrics: List[str], model_type: str,
                  ss_mode: str = "none", ss_threshold: int = 0,
+                 n_clients: int = 0,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.training_metrics           = training_metrics
@@ -192,6 +193,7 @@ class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
         self.model_type                 = model_type
         self.ss_mode                    = ss_mode
         self.ss_threshold               = ss_threshold
+        self.n_enc                      = n_clients
         self.should_continue            = True
         self.last_fit_bytes             = 0
         self.last_client_train_times:   List[float] = []
@@ -213,6 +215,11 @@ class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
             self.training_metrics.start_training()
         self.training_metrics.start_round(server_round)
 
+        # Registro de caidas
+        if failures:
+            print(f"  [DROPOUT] Ronda {server_round}: {len(failures)} cliente(s) "
+                  f"con fallo/timeout. Continuando con {len(results)} respuesta(s).")
+
         self.last_fit_bytes          = 0
         self.last_client_train_times = []
         self.last_ss_split_times     = []
@@ -225,21 +232,29 @@ class EarlyStoppingStrategy(fl.server.strategy.FedAvg):
             self.last_ss_split_times.append(fit_res.metrics.get("ss_split_time", 0.0))
 
         if self.ss_mode == "shamir" and results:
-            n_clients = len(results)
+            n_present = len(results)                       # clientes que respondieron
+            n_enc     = self.n_enc if self.n_enc > 0 else n_present  # shares por capa
             t_use     = (self.ss_threshold if self.ss_threshold > 0
-                         else math.ceil((n_clients + 1) / 2))
+                         else math.ceil((n_enc + 1) / 2))
+
+           
+            if n_present < t_use:
+                print(f"  [AVISO] Solo {n_present} cliente(s) presentes (< t={t_use}). "
+                      f"La suma reconstruida agrega menos contribuciones de lo previsto.")
 
             all_packed = [parameters_to_ndarrays(fit_res.parameters)
                           for _, fit_res in results]
 
             t0 = time.time()
+           
             server_payloads = simulate_p2p_exchange_and_local_sum(
                 all_packed=all_packed,
-                n=n_clients,
+                n=n_enc,
             )
+           
             global_params = secagg_server_reconstruct(
                 server_payloads = server_payloads,
-                original_n_clients=n_clients,
+                original_n_clients=n_present,
                 t=t_use)
             self.last_ss_agg_time = time.time() - t0
 
@@ -323,6 +338,7 @@ def run_server(min_clients: int, model_type: str,
         model_type=model_type,
         ss_mode=ss_mode,
         ss_threshold=t_eff,
+        n_clients=min_clients,
         fraction_fit=1.0,
         fraction_evaluate=1.0,
         min_fit_clients=min_clients,
@@ -332,7 +348,7 @@ def run_server(min_clients: int, model_type: str,
     )
 
     model_label = "Red Neuronal" if model_type == "nn" else "Regresion Logistica"
-    ss_info = (f" | SecAgg Shamir (t={t_eff}, n={min_clients})"
+    ss_info = (f" | Agregacion Shamir (SS, t={t_eff}, n={min_clients})"
                if ss_mode == "shamir" else "")
     print(f"Iniciando servidor ({model_label}{ss_info}). "
           f"Rondas Max: {MAX_ROUNDS}. Paciencia: {PATIENCE}")
