@@ -1,3 +1,4 @@
+# utils.py — VERSION UNIFICADA (Red Neuronal + Regresion Logistica)
 import numpy as np
 import pandas as pd
 import torch
@@ -11,32 +12,56 @@ from sklearn.feature_selection import VarianceThreshold
 from sklearn.metrics import (accuracy_score, log_loss, precision_score, recall_score,
                              f1_score, confusion_matrix, matthews_corrcoef, roc_auc_score)
 
-# Parametro de particion Dirichlet
 
-# Alpha controla el grado de heterogeneidad entre clientes: ( Importante )
-#   alpha pequeño (0.1) -> muy no-IID (cada cliente ve casi una sola clase)
-#   alpha = 0.5         -> heterogeneidad moderada ( Se elige esta opcion porque es un buen punto intermedio)
-#   alpha grande (1.0+) -> casi IID
 DIRICHLET_ALPHA = 0.5
 
-# BLOQUE 1: CARGA DE DATOS (compartido por ambos modelos)
-# Siempre devuelve arrays NumPy: X_train, X_test, y_train, y_test
 
-def _build_preprocessors():
-    df0 = pd.read_csv("clase0.csv", nrows=5000)
-    df1 = pd.read_csv("clase1.csv", nrows=5000)
+IID_PARTITION_SEED = 42
+
+# Columnas de texto del dataset CIC2023 que no son features numéricas
+COLS_TEXTO_CIC2023 = [
+    "src_mac", "dst_mac", "src_ip", "dst_ip",
+    "device_mac", "eth_src_oui", "eth_dst_oui",
+    "highest_layer", "http_uri", "http_host",
+    "http_content_type", "user_agent", "tls_server",
+    "http_request_method", "dns_server", "dns_query_type",
+    "icmp_checksum_status"
+]
+
+def _load_clean_df():
+    df0 = pd.read_csv("clase0.csv", nrows=5000,
+                      low_memory=False,
+                      na_values=["none", "None", "NONE", ""])
+    df1 = pd.read_csv("clase1.csv", nrows=5000,
+                      low_memory=False,
+                      na_values=["none", "None", "NONE", ""])
     df0["Target"] = 0
     df1["Target"] = 1
     df = pd.concat([df0, df1], ignore_index=True)
 
     df.columns = df.columns.str.strip()
-    for col in ["Flow ID", "Src IP", "Dst IP", "Timestamp", "Label", "SimillarHTTP"]:
-        if col in df.columns:
-            df = df.drop(columns=[col])
 
+    # 1. Eliminar columnas de texto conocidas
+    cols_a_drop = [c for c in COLS_TEXTO_CIC2023 if c in df.columns]
+    df = df.drop(columns=cols_a_drop)
+
+    # 2. Reemplazar infinitos
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
 
+    # 3. Eliminar cualquier columna no numérica restante (como handshake_version)
+    target = df["Target"].copy()
+    df = df.select_dtypes(include=[np.number])
+    df["Target"] = target
+
+    # 4. Rellenar NaN con mediana
+    df.fillna(df.median(numeric_only=True), inplace=True)
+
+    return df
+
+
+def _build_preprocessors():
+
+    df = _load_clean_df()
     X_full = df.drop(columns=["Target"]).values.astype(np.float32)
 
     selector = VarianceThreshold(threshold=0)
@@ -53,45 +78,38 @@ def _build_preprocessors():
 
 
 def _load_full_data():
-    # Carga el dataset completo. Cada cliente ve todos los datos (escenario IID).
-    df0 = pd.read_csv("clase0.csv", nrows=5000)
-    df1 = pd.read_csv("clase1.csv", nrows=5000)
-    df0["Target"] = 0
-    df1["Target"] = 1
-    df = pd.concat([df0, df1], ignore_index=True)
-
-    df.columns = df.columns.str.strip()
-    for col in ["Flow ID", "Src IP", "Dst IP", "Timestamp", "Label", "SimillarHTTP"]:
-        if col in df.columns:
-            df = df.drop(columns=[col])
-
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
-
+  
+    df = _load_clean_df()
     return df.drop(columns=["Target"]).values, df["Target"].values
 
 
-def _load_dirichlet_partition(partition_id: int, num_partitions: int):
+def _load_iid_partition(partition_id: int, num_partitions: int):
     
-   # Carga la particion Dirichlet de este cliente.
+    df = _load_clean_df()
+    X = df.drop(columns=["Target"]).values
+    y = df["Target"].values
 
+    rng     = np.random.default_rng(IID_PARTITION_SEED)
+    indices = rng.permutation(len(y))
+    shards  = np.array_split(indices, num_partitions)
+    sel     = shards[partition_id]
+
+    X_part, y_part = X[sel], y[sel]
+    n0 = int((y_part == 0).sum())
+    n1 = int((y_part == 1).sum())
+    print(
+        f"--> [Cliente {partition_id}] IID disjunta: "
+        f"{len(y_part)} muestras | Clase 0 (normal): {n0} | Clase 1 (ataque): {n1}"
+    )
+    return X_part, y_part
+
+
+def _load_dirichlet_partition(partition_id: int, num_partitions: int):
+ 
     from datasets import Dataset as HFDataset
     from flwr_datasets.partitioner import DirichletPartitioner
 
-    df0 = pd.read_csv("clase0.csv", nrows=5000)
-    df1 = pd.read_csv("clase1.csv", nrows=5000)
-    df0["Target"] = 0
-    df1["Target"] = 1
-    df = pd.concat([df0, df1], ignore_index=True)
-
-    df.columns = df.columns.str.strip()
-    for col in ["Flow ID", "Src IP", "Dst IP", "Timestamp", "Label", "SimillarHTTP"]:
-        if col in df.columns:
-            df = df.drop(columns=[col])
-
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.dropna(inplace=True)
-
+    df = _load_clean_df()
     hf_dataset = HFDataset.from_pandas(df, preserve_index=False)
 
     partitioner = DirichletPartitioner(
@@ -118,15 +136,10 @@ def _load_dirichlet_partition(partition_id: int, num_partitions: int):
 def load_data(partition_id: int = None, num_partitions: int = None,
               use_dirichlet: bool = False):
 
-    # Punto de entrada unico para la carga de datos. Usado por ambos modelos.
-
-    # Devuelve siempre arrays NumPy: X_train, X_test, y_train, y_test.
-    # - La RNA los envuelve en DataLoaders internamente en sus funciones train/test.
-    # - La RL los usa directamente.
-
-
     if use_dirichlet:
         X, y = _load_dirichlet_partition(partition_id, num_partitions)
+    elif partition_id is not None and num_partitions is not None:
+        X, y = _load_iid_partition(partition_id, num_partitions)
     else:
         X, y = _load_full_data()
 
@@ -134,14 +147,17 @@ def load_data(partition_id: int = None, num_partitions: int = None,
     if selector is not None:
         X = selector.transform(X)
     X = scaler.transform(X)
+    print("Número de características:", X.shape[1])
 
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
 
+# ==========================================================================
 # BLOQUE 2: RED NEURONAL (PyTorch)
+# ==========================================================================
 
 class IoTDataset(Dataset):
-    
+    """Convierte arrays NumPy a tensores PyTorch."""
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
@@ -168,10 +184,12 @@ class Net(nn.Module):
 
 
 def get_model_size_bytes(net):
+    """Tamaño del modelo en bytes (suma de todos los parametros)."""
     return sum(p.numel() * p.element_size() for p in net.parameters())
 
 
 def train_nn(net, X_train, y_train, epochs=1):
+    """Entrena la red neuronal. Crea el DataLoader internamente."""
     loader = DataLoader(IoTDataset(X_train, y_train), batch_size=32, shuffle=True)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
@@ -188,6 +206,7 @@ def train_nn(net, X_train, y_train, epochs=1):
 
 
 def test_nn(net, X_test, y_test):
+    """Evalua la red neuronal y devuelve un diccionario con todas las metricas."""
     loader = DataLoader(IoTDataset(X_test, y_test), batch_size=32)
     criterion = nn.CrossEntropyLoss()
     all_preds, all_labels, all_probs = [], [], []
@@ -212,11 +231,11 @@ def test_nn(net, X_test, y_test):
     y_pred = np.array(all_preds)
     y_prob = np.array(all_probs)
 
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel()
-    p_per = precision_score(y_true, y_pred, average=None, zero_division=0)
-    r_per = recall_score(y_true, y_pred, average=None, zero_division=0)
-    f_per = f1_score(y_true, y_pred, average=None, zero_division=0)
+    p_per = precision_score(y_true, y_pred, labels=[0, 1], average=None, zero_division=0)
+    r_per = recall_score(y_true, y_pred, labels=[0, 1], average=None, zero_division=0)
+    f_per = f1_score(y_true, y_pred, labels=[0, 1], average=None, zero_division=0)
 
     return {
         "accuracy":     float((y_pred == y_true).sum() / n),
@@ -225,7 +244,7 @@ def test_nn(net, X_test, y_test):
         "recall":       float(recall_score(y_true, y_pred, average="weighted", zero_division=0)),
         "f1":           float(f1_score(y_true, y_pred, average="weighted", zero_division=0)),
         "mcc":          float(matthews_corrcoef(y_true, y_pred)),
-        "auc_roc":      float(roc_auc_score(y_true, y_prob)) if len(np.unique(y_true)) > 1 else 0.5,
+        "auc_roc":      float(roc_auc_score(y_true, y_prob)),
         "tp": float(tp), "tn": float(tn), "fp": float(fp), "fn": float(fn),
         "precision_c0": float(p_per[0]), "precision_c1": float(p_per[1]),
         "recall_c0":    float(r_per[0]), "recall_c1":    float(r_per[1]),
@@ -234,9 +253,12 @@ def test_nn(net, X_test, y_test):
     }
 
 
+# ==========================================================================
 # BLOQUE 3: REGRESION LOGISTICA (scikit-learn)
+# ==========================================================================
 
 def create_model(n_features: int) -> LogisticRegression:
+    """Crea y devuelve un modelo de Regresion Logistica inicializado."""
     model = LogisticRegression(max_iter=200, solver="lbfgs", warm_start=True)
     model.classes_ = np.array([0, 1])
     model.coef_ = np.zeros((1, n_features), dtype=np.float64)
@@ -245,16 +267,19 @@ def create_model(n_features: int) -> LogisticRegression:
 
 
 def model_to_params(model: LogisticRegression):
+    """Serializa el modelo como lista de arrays NumPy (interfaz Flower)."""
     return [model.coef_.copy(), model.intercept_.copy()]
 
 
 def params_to_model(model: LogisticRegression, params):
+    """Carga parametros del servidor en el modelo local."""
     model.coef_ = params[0].copy()
     model.intercept_ = params[1].copy()
     return model
 
 
 def train_lr(model: LogisticRegression, X_train, y_train) -> LogisticRegression:
+    """Entrena el modelo de regresion logistica."""
     # Comprobar si el cliente tiene al menos 2 clases
     clases_presentes = np.unique(y_train)
     if len(clases_presentes) < 2:
@@ -266,6 +291,7 @@ def train_lr(model: LogisticRegression, X_train, y_train) -> LogisticRegression:
 
 
 def test_lr(model: LogisticRegression, X_test, y_test) -> dict:
+    """Evalua el modelo de regresion logistica y devuelve todas las metricas."""
     preds = model.predict(X_test)
     proba = model.predict_proba(X_test)
 
