@@ -1,4 +1,3 @@
-# utils.py — VERSION UNIFICADA (Red Neuronal + Regresion Logistica)
 import numpy as np
 import pandas as pd
 import torch
